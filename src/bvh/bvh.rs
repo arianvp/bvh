@@ -9,6 +9,7 @@ use aabb::{AABB, Bounded};
 use bounding_hierarchy::{BoundingHierarchy, BHShape};
 use nalgebra::Point3;
 use ray::Ray;
+use ray::Intersection;
 use std::f32;
 use std::iter::repeat;
 use utils::{Bucket, concatenate_vectors, joint_aabb_of_shapes};
@@ -666,6 +667,23 @@ impl BoundingHierarchy for BVH {
 
     fn pretty_print(&self) {
         self.pretty_print();
+    }
+
+    fn intersect<'a, Shape: BHShape>(&'a self, ray: &Ray, shapes: &'a[Shape]) -> Option<(&Shape, Intersection)> {
+        let hits = self.traverse(&ray, shapes);
+        let mut answer: Option<(&Shape, Intersection)> = None;
+        for shape in hits {
+            let intersection = shape.intersect(ray);
+            match answer {
+                Some(ref mut answer) => {
+                        if intersection.distance < answer.1.distance {
+                        *answer = (shape, intersection)
+                    }
+                },
+                None => { answer = Some((shape, intersection)) },
+            }
+        }
+        answer
     }
 }
 

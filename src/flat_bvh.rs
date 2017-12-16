@@ -4,6 +4,7 @@ use aabb::{AABB, Bounded};
 use bounding_hierarchy::{BoundingHierarchy, BHShape};
 use bvh::{BVH, BVHNode};
 use ray::Ray;
+use ray::Intersection;
 
 /// A structure of a node of a flat [`BVH`]. The structure of the nodes allows for an
 /// iterative traversal approach without the necessity to maintain a stack or queue.
@@ -400,6 +401,26 @@ impl BoundingHierarchy for FlatBVH {
 
         hit_shapes
     }
+
+    fn intersect<'a, Shape: BHShape>(&'a self, ray: &Ray, shapes: &'a[Shape]) -> Option<(&Shape, Intersection)> {
+        let hits = self.traverse(&ray, shapes);
+        let mut answer: Option<(&Shape, Intersection)> = None;
+        for shape in hits {
+            let intersection = shape.intersect(ray);
+            match answer {
+                Some(ref mut answer) => {
+                        if intersection.distance < answer.1.distance {
+                        *answer = (shape, intersection)
+                    }
+                },
+                None => { answer = Some((shape, intersection)) },
+            }
+        }
+        answer
+    }
+      
+        
+
 
     /// Prints a textual representation of a [`FlatBVH`].
     ///

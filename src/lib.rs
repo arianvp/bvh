@@ -72,6 +72,10 @@
 
 #![feature(test)]
 
+#![feature(unique)]
+
+#![feature(allocator_api)]
+
 #[macro_use]
 extern crate approx;
 #[macro_use]
@@ -98,6 +102,7 @@ pub mod bvh;
 pub mod flat_bvh;
 pub mod ray;
 mod utils;
+pub mod packed_bvh;
 
 
 #[cfg(test)]

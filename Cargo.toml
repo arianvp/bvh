@@ -17,6 +17,7 @@ approx = "0.1.1"
 nalgebra = "0.12.1"
 rand = "0.3.14"
 log = "0.3.7"
+stdsimd = "*"
 
 [dev-dependencies]
 quickcheck = "0.4.1"

@@ -15,6 +15,7 @@ use axis::Axis;
 use aabb::{AABB, Bounded};
 use bounding_hierarchy::{BoundingHierarchy, BHShape};
 use ray::Ray;
+use ray::Intersection;
 
 /// A vector represented as a tuple
 pub type TupleVec = (f32, f32, f32);
@@ -62,6 +63,11 @@ impl BHShape for UnitBox {
 
     fn bh_node_index(&self) -> usize {
         self.node_index
+    }
+
+    // TODO no dummy impl
+    fn intersect(&self, _ray: &Ray) -> Intersection {
+        Intersection{distance: 0.,u: 0.,v: 0.}
     }
 }
 
@@ -176,6 +182,10 @@ impl BHShape for Triangle {
 
     fn bh_node_index(&self) -> usize {
         self.node_index
+    }
+
+    fn intersect(&self, ray: &Ray) -> Intersection {
+        ray.intersects_triangle(&self.a,&self.b,&self.c)
     }
 }
 
@@ -429,7 +439,7 @@ pub fn intersect_list_aabb(triangles: &[Triangle], bounds: &AABB, b: &mut ::test
         // Iterate over the list of triangles.
         for triangle in triangles {
             // First test whether the ray intersects the AABB of the triangle.
-            if ray.intersects_aabb(&triangle.aabb()) {
+            if ray.intersects_aabb(&triangle.aabb()).is_some() {
                 ray.intersects_triangle(&triangle.a, &triangle.b, &triangle.c);
             }
         }
@@ -460,12 +470,7 @@ pub fn intersect_bh<T: BoundingHierarchy>(bh: &T,
         let ray = create_ray(&mut seed, bounds);
 
         // Traverse the `BoundingHierarchy` recursively.
-        let hits = bh.traverse(&ray, triangles);
-
-        // Traverse the resulting list of positive `AABB` tests
-        for triangle in &hits {
-            ray.intersects_triangle(&triangle.a, &triangle.b, &triangle.c);
-        }
+        bh.intersect(&ray, triangles);
     });
 }
 

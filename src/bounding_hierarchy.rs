@@ -2,6 +2,7 @@
 
 use aabb::Bounded;
 use ray::Ray;
+use ray::Intersection;
 
 /// Describes a shape as referenced by a [`BoundingHierarchy`] leaf node.
 /// Knows the index of the node in the [`BoundingHierarchy`] it is in.
@@ -20,6 +21,10 @@ pub trait BHShape: Bounded {
     /// [`BoundingHierarchy`]: struct.BoundingHierarchy.html
     ///
     fn bh_node_index(&self) -> usize;
+
+
+    /// lol
+    fn intersect(&self, ray: &Ray) -> Intersection;
 }
 
 /// This trait defines an acceleration structure with space partitioning.
@@ -163,6 +168,13 @@ pub trait BoundingHierarchy {
     /// [`AABB`]: ../aabb/struct.AABB.html
     ///
     fn traverse<'a, Shape: BHShape>(&'a self, ray: &Ray, shapes: &'a [Shape]) -> Vec<&Shape>;
+
+
+    /// BHShapes can optionally provide their intersection. For some BVH's this is way more
+    /// optimal to directly do the intersect
+    ///
+    /// retunrs both the intersection point and the object that was intersected
+    fn intersect<'a, Shape: BHShape>(&'a self, ray: &Ray, shapes: &'a[Shape]) -> Option<(&Shape, Intersection)>;
 
     /// Prints the [`BoundingHierarchy`] in a tree-like visualization.
     ///
