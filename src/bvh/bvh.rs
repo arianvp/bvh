@@ -284,6 +284,8 @@ impl BVHNode {
 
             // Compute the costs for each configuration and select the best configuration.
             let mut min_bucket = 0;
+
+            // we should at least be better than our parent
             let mut min_cost = f32::INFINITY;
             let mut child_l_aabb = AABB::empty();
             let mut child_r_aabb = AABB::empty();
@@ -321,8 +323,8 @@ impl BVHNode {
         };
 
         // Construct the actual data structure and replace the dummy node.
-        assert!(!child_l_aabb.is_empty());
-        assert!(!child_r_aabb.is_empty());
+        //assert!(!child_l_aabb.is_empty());
+        //assert!(!child_r_aabb.is_empty());
         nodes[node_index] = BVHNode::Node {
             parent_index: parent_index,
             depth: depth,
@@ -354,11 +356,22 @@ impl BVHNode {
                 child_r_index,
                 ..
             } => {
-                if ray.intersects_aabb(child_l_aabb) {
-                    BVHNode::traverse_recursive(nodes, child_l_index, ray, indices);
-                }
-                if ray.intersects_aabb(child_r_aabb) {
-                    BVHNode::traverse_recursive(nodes, child_r_index, ray, indices);
+                match (ray.intersects_aabb(child_l_aabb), ray.intersects_aabb(child_r_aabb)) {
+                    (Some(t1), Some(t2)) =>
+                        if t1 <= t2 {
+                            BVHNode::traverse_recursive(nodes, child_l_index, ray, indices);
+                            BVHNode::traverse_recursive(nodes, child_r_index, ray, indices);
+                        } else {
+                            BVHNode::traverse_recursive(nodes, child_r_index, ray, indices);
+                            BVHNode::traverse_recursive(nodes, child_l_index, ray, indices);
+                        },
+                    (Some(_), None) => {
+                        BVHNode::traverse_recursive(nodes, child_l_index, ray, indices);
+                    },
+                    (None, Some(_)) => {
+                        BVHNode::traverse_recursive(nodes, child_r_index, ray, indices);
+                    },
+                    (None, None) => { }
                 }
             }
             BVHNode::Leaf { shape_index, .. } => {

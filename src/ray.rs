@@ -107,7 +107,7 @@ impl Ray {
     /// [`Ray`]: struct.Ray.html
     /// [`AABB`]: struct.AABB.html
     ///
-    pub fn intersects_aabb(&self, aabb: &AABB) -> bool {
+    pub fn intersects_aabb(&self, aabb: &AABB) -> Option<f32> {
         let mut ray_min = (aabb[self.sign.x].x - self.origin.x) * self.inv_direction.x;
         let mut ray_max = (aabb[1 - self.sign.x].x - self.origin.x) * self.inv_direction.x;
 
@@ -115,7 +115,7 @@ impl Ray {
         let y_max = (aabb[1 - self.sign.y].y - self.origin.y) * self.inv_direction.y;
 
         if (ray_min > y_max) || (y_min > ray_max) {
-            return false;
+            return None;
         }
 
         if y_min > ray_min {
@@ -134,7 +134,7 @@ impl Ray {
         let z_max = (aabb[1 - self.sign.z].z - self.origin.z) * self.inv_direction.z;
 
         if (ray_min > z_max) || (z_min > ray_max) {
-            return false;
+            return None;
         }
 
         // Only required for bounded intersection intervals.
@@ -148,7 +148,11 @@ impl Ray {
         // Using the following solution significantly decreases the performance
         // ray_max = ray_max.min(y_max);
 
-        ray_max > 0.0
+        if ray_max <= 0.0 {
+            None
+        } else {
+            Some(ray_min)
+        }
     }
 
     /// Naive implementation of a [`Ray`]/[`AABB`] intersection algorithm.
@@ -219,7 +223,7 @@ impl Ray {
     /// [`Ray`]: struct.Ray.html
     /// [`AABB`]: struct.AABB.html
     ///
-    pub fn intersects_aabb_branchless(&self, aabb: &AABB) -> bool {
+    pub fn intersects_aabb_branchless(&self, aabb: &AABB) -> Option<f32> {
         let tx1 = (aabb.min.x - self.origin.x) * self.inv_direction.x;
         let tx2 = (aabb.max.x - self.origin.x) * self.inv_direction.x;
 
@@ -238,7 +242,11 @@ impl Ray {
         tmin = tmin.max(tz1.min(tz2));
         tmax = tmax.min(tz1.max(tz2));
 
-        tmax >= tmin && tmax >= 0.0
+        if tmax < tmin || tmax < 0.0 {
+            None
+        } else {
+            Some(tmin)
+        }
     }
 
     /// Implementation of the [Möller-Trumbore triangle/ray intersection algorithm]
@@ -339,7 +347,7 @@ mod tests {
     quickcheck!{
         fn test_ray_points_at_aabb_center(data: (TupleVec, TupleVec, TupleVec)) -> bool {
             let (ray, aabb) = gen_ray_to_aabb(data);
-            ray.intersects_aabb(&aabb)
+            ray.intersects_aabb(&aabb).is_some()
         }
     }
 
@@ -357,7 +365,7 @@ mod tests {
     quickcheck!{
         fn test_ray_points_at_aabb_center_branchless(data: (TupleVec, TupleVec, TupleVec)) -> bool {
             let (ray, aabb) = gen_ray_to_aabb(data);
-            ray.intersects_aabb_branchless(&aabb)
+            ray.intersects_aabb_branchless(&aabb).is_some()
         }
     }
 
@@ -371,7 +379,7 @@ mod tests {
             // Invert the direction of the ray
             ray.direction = -ray.direction;
             ray.inv_direction = -ray.inv_direction;
-            !ray.intersects_aabb(&aabb) || aabb.contains(&ray.origin)
+            !ray.intersects_aabb(&aabb).is_some() || aabb.contains(&ray.origin)
         }
     }
 
@@ -399,7 +407,7 @@ mod tests {
             // Invert the ray direction
             ray.direction = -ray.direction;
             ray.inv_direction = -ray.inv_direction;
-            !ray.intersects_aabb_branchless(&aabb) || aabb.contains(&ray.origin)
+            !ray.intersects_aabb_branchless(&aabb).is_some() || aabb.contains(&ray.origin)
         }
     }
 

@@ -381,13 +381,13 @@ impl BoundingHierarchy for FlatBVH {
             if node.entry_index == u32::max_value() {
                 // If the entry_index is MAX_UINT32, then it's a leaf node.
                 let shape = &shapes[node.shape_index as usize];
-                if ray.intersects_aabb(&shape.aabb()) {
+                if ray.intersects_aabb(&shape.aabb()).is_some() {
                     hit_shapes.push(shape);
                 }
 
                 // Exit the current node.
                 index = node.exit_index as usize;
-            } else if ray.intersects_aabb(&node.aabb) {
+            } else if ray.intersects_aabb(&node.aabb).is_some() {
                 // If entry_index is not MAX_UINT32 and the AABB test passes, then
                 // proceed to the node in entry_index (which goes down the bvh branch).
                 index = node.entry_index as usize;
