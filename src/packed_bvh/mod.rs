@@ -40,6 +40,58 @@ fn grow_convex_hull(convex_hull: (AABB, AABB), shape_aabb: &AABB) -> (AABB, AABB
 }
 
 impl BVHNode {
+    fn intersect_recursive<'a, Shape: BHShape>(nodes: &[BVHNode], node_index: usize, ray: &Ray, indices: &Vec<usize>, shapes: &'a[Shape]) -> Option<(&'a Shape, Intersection)> {
+        let node = nodes[node_index];
+        if node.len == 0 {
+            let left = node.index as usize;
+            let l = ray.intersects_aabb(&nodes[left].bounds);
+            let r = ray.intersects_aabb(&nodes[left + 1].bounds);
+            match (l, r) {
+                (Some(t1), Some(t2)) => {
+                    if t1 <= t2 {
+                        match (BVHNode::intersect_recursive(nodes, left, ray, indices, shapes), BVHNode::intersect_recursive(nodes, left + 1, ray, indices, shapes)) {
+                            (Some(x),Some(y)) => Some(if x.1.distance < y.1.distance { x } else { y }),
+                            (Some(x), _) => Some(x),
+                            (_, Some(y)) => Some(y),
+                            _ => None,
+
+                        }
+                    } else {
+                        match (BVHNode::intersect_recursive(nodes, left + 1, ray, indices, shapes), BVHNode::intersect_recursive(nodes, left, ray, indices, shapes)) {
+                            (Some(x),Some(y)) => Some(if x.1.distance < y.1.distance { x } else { y }),
+                            (Some(x), _) => Some(x),
+                            (_, Some(y)) => Some(y),
+                            _ => None,
+                        }
+                    }
+                }
+                (Some(_), None) => {
+                    BVHNode::intersect_recursive(nodes, left, ray, indices, shapes)
+                }
+                (None, Some(_)) => {
+                    BVHNode::intersect_recursive(nodes, left + 1, ray, indices, shapes)
+                }
+                (None, None) => None
+            }
+        } else {
+            let mut answer: Option<(&Shape, Intersection)> = None;
+            for i in node.index..node.index+node.len {
+                let idx = indices[i as usize];
+                let shape = &shapes[idx];
+                let intersection = shape.intersect(ray);
+                match answer {
+                    Some(ref mut answer) => {
+                            if intersection.distance < answer.1.distance {
+                            *answer = (shape, intersection)
+                        }
+                    },
+                    None => { answer = Some((shape, intersection)) },
+                }
+            }
+            answer
+        }
+    }
+
     fn traverse_recursive(
         nodes: &[BVHNode],
         node_index: usize,
@@ -321,20 +373,7 @@ impl BVH {
     }
 
     fn intersect<'a, Shape: BHShape>(&'a self, ray: &Ray, shapes: &'a[Shape]) -> Option<(&Shape, Intersection)> {
-        let hits = self.traverse(&ray, shapes);
-        let mut answer: Option<(&Shape, Intersection)> = None;
-        for shape in hits {
-            let intersection = shape.intersect(ray);
-            match answer {
-                Some(ref mut answer) => {
-                        if intersection.distance < answer.1.distance {
-                        *answer = (shape, intersection)
-                    }
-                },
-                None => { answer = Some((shape, intersection)) },
-            }
-        }
-        answer
+        BVHNode::intersect_recursive(&self.nodes, 0, ray, &self.indices, shapes)
     }
 }
 
