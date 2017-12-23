@@ -696,7 +696,7 @@ pub mod tests {
 
     #[bench]
     /// Benchmark the construction of a `BVH` for the Sponza scene.
-    fn bench_build_sponza_bvh(mut b: &mut ::test::Bencher) {
+    fn bench_build_sponza_bvh(b: &mut ::test::Bencher) {
         let (mut triangles, _) = load_sponza_scene();
         b.iter(|| { BVH::build(&mut triangles); });
     }
