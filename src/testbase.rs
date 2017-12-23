@@ -184,6 +184,7 @@ impl BHShape for Triangle {
         self.node_index
     }
 
+    #[inline(always)]
     fn intersect(&self, ray: &Ray) -> Intersection {
         ray.intersects_triangle(&self.a,&self.b,&self.c)
     }

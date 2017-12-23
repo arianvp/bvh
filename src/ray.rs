@@ -107,6 +107,7 @@ impl Ray {
     /// [`Ray`]: struct.Ray.html
     /// [`AABB`]: struct.AABB.html
     ///
+    #[inline(always)]
     pub fn intersects_aabb(&self, aabb: &AABB) -> Option<f32> {
         let mut ray_min = (aabb[self.sign.x].x - self.origin.x) * self.inv_direction.x;
         let mut ray_max = (aabb[1 - self.sign.x].x - self.origin.x) * self.inv_direction.x;
@@ -177,6 +178,7 @@ impl Ray {
     /// [`Ray`]: struct.Ray.html
     /// [`AABB`]: struct.AABB.html
     ///
+    #[inline(always)]
     pub fn intersects_aabb_naive(&self, aabb: &AABB) -> bool {
         let hit_min_x = (aabb.min.x - self.origin.x) * self.inv_direction.x;
         let hit_max_x = (aabb.max.x - self.origin.x) * self.inv_direction.x;
@@ -223,6 +225,7 @@ impl Ray {
     /// [`Ray`]: struct.Ray.html
     /// [`AABB`]: struct.AABB.html
     ///
+    #[inline(always)]
     pub fn intersects_aabb_branchless(&self, aabb: &AABB) -> Option<f32> {
         let tx1 = (aabb.min.x - self.origin.x) * self.inv_direction.x;
         let tx2 = (aabb.max.x - self.origin.x) * self.inv_direction.x;
@@ -255,6 +258,7 @@ impl Ray {
     /// the u and v coordinates of the intersection.
     /// The distance is set to +INFINITY if the ray does not intersect the triangle, or hits
     /// it from behind.
+    #[inline(always)]
     pub fn intersects_triangle(&self,
                                a: &Point3<f32>,
                                b: &Point3<f32>,

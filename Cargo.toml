@@ -22,3 +22,7 @@ stdsimd = "*"
 [dev-dependencies]
 quickcheck = "0.4.1"
 obj-rs = "0.4"
+
+[profile.bench]
+debug = true
+lto = true
