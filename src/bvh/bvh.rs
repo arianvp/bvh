@@ -357,22 +357,12 @@ impl BVHNode {
                 child_r_index,
                 ..
             } => {
-                match (ray.intersects_aabb(child_l_aabb), ray.intersects_aabb(child_r_aabb)) {
-                    (Some(t1), Some(t2)) =>
-                        if t1 <= t2 {
-                            BVHNode::traverse_recursive(nodes, child_l_index, ray, indices);
-                            BVHNode::traverse_recursive(nodes, child_r_index, ray, indices);
-                        } else {
-                            BVHNode::traverse_recursive(nodes, child_r_index, ray, indices);
-                            BVHNode::traverse_recursive(nodes, child_l_index, ray, indices);
-                        },
-                    (Some(_), None) => {
-                        BVHNode::traverse_recursive(nodes, child_l_index, ray, indices);
-                    },
-                    (None, Some(_)) => {
-                        BVHNode::traverse_recursive(nodes, child_r_index, ray, indices);
-                    },
-                    (None, None) => { }
+                
+                if ray.intersects_aabb(child_l_aabb).is_some() {
+                    BVHNode::traverse_recursive(nodes, child_l_index, ray, indices);
+                }
+                if ray.intersects_aabb(child_r_aabb).is_some() {
+                    BVHNode::traverse_recursive(nodes, child_r_index, ray, indices);
                 }
             }
             BVHNode::Leaf { shape_index, .. } => {

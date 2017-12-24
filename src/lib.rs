@@ -68,7 +68,8 @@
 //! [`nalgebra`]: http://nalgebra.org/doc/nalgebra/
 //!
 
-#![deny(missing_docs)]
+#![feature(untagged_unions)]
+// #![deny(missing_docs)]
 
 #![feature(test)]
 
@@ -104,6 +105,7 @@ pub mod ray;
 mod utils;
 pub mod packed_bvh;
 
+extern crate stdsimd;
 
 #[cfg(test)]
 mod testbase;
