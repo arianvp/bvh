@@ -2,6 +2,7 @@
 //! It uses a packed representation that allowes two nodes to fit in a cache line,
 //! and allocates nodes from a node pool that has been aligned to cache boundaries.
 use EPSILON;
+use std::f32;
 use std::mem;
 use std::heap;
 use std::heap::Alloc;
@@ -9,7 +10,7 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 use nalgebra::Point3;
 use stdsimd::simd::f32x4;
-use stdsimd::vendor::{_mm_mul_ps,_mm_sub_ps,_mm_max_ps,_mm_min_ps};
+use stdsimd::vendor::{_mm_max_ps,_mm_min_ps, _mm_comige_ss, _mm_movehl_ps, _mm_max_ss, _mm_min_ss, _mm_shuffle_ps};
 use aabb::{AABB, Bounded};
 use ray::Ray;
 use ray::Intersection;
@@ -64,6 +65,7 @@ fn grow_convex_hull(convex_hull: (AABB, AABB), shape_aabb: &AABB) -> (AABB, AABB
 }
 
 impl BVHNode {
+    #[inline(always)]
     fn new(index: u32, len: u32, bounds: AABB) -> BVHNode {
         let min = bounds.min;
         let max = bounds.max;
@@ -72,37 +74,84 @@ impl BVHNode {
             max_or_len: MaxOrLen{max_and_len: MaxAndLen { max, len }},
         }
     }
+    #[inline(always)]
     fn set_bounds(&mut self, bounds: AABB) {
         unsafe {
             self.min_or_index.min_and_index.min = bounds.min;
             self.max_or_len.max_and_len.max = bounds.max;
         }
     }
+    #[inline(always)]
     fn bounds(&self) -> AABB {
         unsafe {
             AABB { min: self.min_or_index.min_and_index.min, max: self.max_or_len.max_and_len.max }
         }
     }
+    #[inline(always)]
     fn set_index(&mut self, index: u32) {
         unsafe { self.min_or_index.min_and_index.index = index }
     }
+    #[inline(always)]
     fn index(&self) -> u32 {
         unsafe { self.min_or_index.min_and_index.index }
     }
+    #[inline(always)]
     fn set_len(&mut self, len: u32) {
         unsafe { self.max_or_len.max_and_len.len = len }
     }
+    #[inline(always)]
     fn len(&self) -> u32 {
         unsafe { self.max_or_len.max_and_len.len }
     }
 
+    #[inline(always)]
+    fn intersects_ray(&self, ray: &Ray) -> bool {
+        unsafe {
+            let origin = ray.origin.xyz0;
+            let invdir = ray.inv_direction.xyz0;
+            let boxmin = self.min_or_index.min4;
+            let boxmax = self.max_or_len.max4;
+
+            let l1 = (boxmin - origin) * invdir;
+            let l2 = (boxmax - origin) * invdir;
+
+            let l1a      = _mm_min_ps(l1, f32x4::splat(f32::INFINITY));
+            let l2a      = _mm_min_ps(l2, f32x4::splat(f32::INFINITY));
+
+            let l1b      = _mm_max_ps(l1, f32x4::splat(-f32::INFINITY));
+            let l2b      = _mm_max_ps(l2, f32x4::splat(-f32::INFINITY));
+
+            let mut lmax = _mm_max_ps(l1a, l2a);
+            let mut lmin = _mm_min_ps(l1b, l2b);
+
+            let lmax0    = _mm_shuffle_ps(lmax, lmax, 0x39);
+            let lmin0    = _mm_shuffle_ps(lmin, lmin, 0x39);
+
+            lmax         = _mm_min_ss(lmax, lmax0);
+            lmin         = _mm_max_ss(lmin, lmin0);
+
+            let lmax1    = _mm_movehl_ps(lmax, lmax);
+            let lmin1    = _mm_movehl_ps(lmin, lmin);
+
+            lmax         = _mm_min_ss(lmax, lmax1);
+            lmin         = _mm_max_ss(lmin, lmin1);
+
+            // TODO use these for early out traversal
+            let t_far = lmin;
+            let t_near = lmax;
+
+            (_mm_comige_ss(lmax, f32x4::splat(0.)) & _mm_comige_ss(lmax, lmin)) != 0
+        }
+    }
+
+    #[inline]
     fn intersect<'a, Shape: BHShape>(nodes: &[BVHNode], ray: &Ray, indices: &Vec<usize>, shapes: &'a[Shape]) -> Option<(&'a Shape, Intersection)> {
-        let mut stack = Vec::with_capacity(32);
+        let mut stack = Vec::with_capacity(12);
         stack.push(0);
         let mut answer: Option<(&Shape, Intersection)> = None;
         while let Some(index) = stack.pop() {
             let node = nodes[index];
-            if ray.intersects_aabb(&node.bounds()).is_none() {
+            if !node.intersects_ray(ray) {
                 continue
             }
             if node.len() == 0 {
@@ -243,7 +292,7 @@ impl BVHNode {
             return false;
         }
 
-        const NUM_BUCKETS: usize = 6;
+        const NUM_BUCKETS: usize = 8;
         let mut buckets = [Bucket::empty(); NUM_BUCKETS];
 
         for i in node.index() .. node.index() + node.len() {
@@ -287,7 +336,7 @@ impl BVHNode {
 
         match min_bucket {
             Some(min_bucket) => {
-                let split_value = centroid_bounds.min[split_axis] + (1 + min_bucket) as f32 * (split_axis_size / NUM_BUCKETS as f32);
+                let split_value = centroid_bounds.min[split_axis] + (1 + min_bucket) as f32 * (split_axis_size / (NUM_BUCKETS as f32 - 0.01));
                 let mut pivot_index = node.index() as usize;
                 for i in node.index().. node.index() + node.len() {
                     let center = shapes[indices[i as usize]].aabb().center()[split_axis];

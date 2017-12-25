@@ -357,7 +357,6 @@ impl BVHNode {
                 child_r_index,
                 ..
             } => {
-                
                 if ray.intersects_aabb(child_l_aabb).is_some() {
                     BVHNode::traverse_recursive(nodes, child_l_index, ray, indices);
                 }
