@@ -64,6 +64,7 @@ fn grow_convex_hull(convex_hull: (AABB, AABB), shape_aabb: &AABB) -> (AABB, AABB
     )
 }
 
+
 impl BVHNode {
     #[inline(always)]
     fn new(index: u32, len: u32, bounds: AABB) -> BVHNode {
@@ -105,7 +106,7 @@ impl BVHNode {
     }
 
     #[inline(always)]
-    fn intersects_ray(&self, ray: &Ray) -> bool {
+    fn intersects_ray(&self, ray: &Ray) -> Option<f32> {
         unsafe {
             let origin = ray.origin.xyz0;
             let invdir = ray.inv_direction.xyz0;
@@ -137,12 +138,18 @@ impl BVHNode {
             lmin         = _mm_max_ss(lmin, lmin1);
 
             // TODO use these for early out traversal
-            let t_far = lmin;
-            let t_near = lmax;
+            let t_far = lmin.extract(0);
 
-            (_mm_comige_ss(lmax, f32x4::splat(0.)) & _mm_comige_ss(lmax, lmin)) != 0
+            if (_mm_comige_ss(lmax, f32x4::splat(0.)) & _mm_comige_ss(lmax, lmin)) != 0 {
+                Some(t_far)
+            } else {
+                None
+            }
+
+            
         }
     }
+
 
     #[inline]
     fn intersect<'a, Shape: BHShape>(nodes: &[BVHNode], ray: &Ray, indices: &Vec<usize>, shapes: &'a[Shape]) -> Option<(&'a Shape, Intersection)> {
@@ -151,13 +158,22 @@ impl BVHNode {
         let mut answer: Option<(&Shape, Intersection)> = None;
         while let Some(index) = stack.pop() {
             let node = nodes[index];
-            if !node.intersects_ray(ray) {
-                continue
-            }
             if node.len() == 0 {
                 let left = node.index() as usize;
-                stack.push(left);
-                stack.push(left + 1);
+                let a = nodes[left].intersects_ray(ray);
+                let b = nodes[left + 1].intersects_ray(ray);
+                match(a,b) {
+                    (Some(t1), Some(t2)) => if t1 <= t2 {
+                        stack.push(left + 1);
+                        stack.push(left);
+                    } else { 
+                        stack.push(left);
+                        stack.push(left + 1);
+                    },
+                    (Some(_), None) =>  stack.push(left),
+                    (None, Some(_)) => stack.push(left + 1),
+                    (None, None) => {},
+                }
             } else {
                 for i in node.index()..node.index()+node.len() {
                     let idx = indices[i as usize];
@@ -307,6 +323,7 @@ impl BVHNode {
 
             // Convert that to the actual `Bucket` number.
             let bucket_num = (bucket_num_relative * (NUM_BUCKETS as f32 - 0.01)) as usize;
+
 
             // Extend the selected `Bucket` 
             buckets[bucket_num].add_aabb(&shape_aabb)

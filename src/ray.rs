@@ -4,17 +4,30 @@
 use aabb::AABB;
 use nalgebra::{Vector3, Point3};
 use std::f32::INFINITY;
-use stdsimd::simd::f32x4;
+use stdsimd::simd::{f32x4, f32x8};
 use EPSILON;
 
 pub union PointOrF32x4 {
     pub xyz0: f32x4,
     pub xyz: Point3<f32>,
 }
+
 pub union VectorOrF32x4 {
     pub xyz0: f32x4,
     pub xyz: Vector3<f32>,
 }
+
+trait RayLike {
+}
+
+pub struct Frustum { }
+
+pub struct RayPacket<'a> {
+    frustum: Frustum,
+    rays: &'a [Ray],
+}
+
+impl RayLike for Ray { }
 
 /// A struct which defines a ray and some of its cached values.
 pub struct Ray {
