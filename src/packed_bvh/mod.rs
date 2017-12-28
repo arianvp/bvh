@@ -2,6 +2,7 @@
 //! It uses a packed representation that allowes two nodes to fit in a cache line,
 //! and allocates nodes from a node pool that has been aligned to cache boundaries.
 use EPSILON;
+use nalgebra::Vector3;
 use std::f32;
 use std::mem;
 use std::heap;
@@ -10,10 +11,12 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 use nalgebra::Point3;
 use stdsimd::simd::f32x4;
-use stdsimd::vendor::{_mm_max_ps,_mm_min_ps, _mm_comige_ss, _mm_movehl_ps, _mm_max_ss, _mm_min_ss, _mm_shuffle_ps};
+use stdsimd::vendor::{_mm_max_ps, _mm_min_ps, _mm_comige_ss, _mm_movehl_ps, _mm_max_ss,
+                      _mm_min_ss, _mm_shuffle_ps};
 use aabb::{AABB, Bounded};
 use ray::Ray;
 use ray::Intersection;
+use frustum::Frustum;
 use bounding_hierarchy::{BoundingHierarchy, BHShape};
 use utils::Bucket;
 use std::ptr::Unique;
@@ -60,8 +63,12 @@ fn grow_convex_hull(convex_hull: (AABB, AABB), shape_aabb: &AABB) -> (AABB, AABB
     (
         convex_hull_aabbs.join(shape_aabb),
         convex_hull_centroids.grow(center),
-
     )
+}
+
+struct StackItem {
+    node_index: usize,
+    first_index: usize,
 }
 
 
@@ -71,8 +78,8 @@ impl BVHNode {
         let min = bounds.min;
         let max = bounds.max;
         BVHNode {
-            min_or_index: MinOrIndex{ min_and_index: MinAndIndex { min, index }},
-            max_or_len: MaxOrLen{max_and_len: MaxAndLen { max, len }},
+            min_or_index: MinOrIndex { min_and_index: MinAndIndex { min, index } },
+            max_or_len: MaxOrLen { max_and_len: MaxAndLen { max, len } },
         }
     }
     #[inline(always)]
@@ -85,7 +92,10 @@ impl BVHNode {
     #[inline(always)]
     fn bounds(&self) -> AABB {
         unsafe {
-            AABB { min: self.min_or_index.min_and_index.min, max: self.max_or_len.max_and_len.max }
+            AABB {
+                min: self.min_or_index.min_and_index.min,
+                max: self.max_or_len.max_and_len.max,
+            }
         }
     }
     #[inline(always)]
@@ -106,6 +116,57 @@ impl BVHNode {
     }
 
     #[inline(always)]
+    fn intersects_frustum(&self, frustum: &Frustum) -> bool {
+        let mut vmin: Vector3<f32> = Vector3::new(0., 0., 0.);
+        let mut vmax: Vector3<f32> = Vector3::new(0., 0., 0.);
+        let mut ret = true;
+
+        for plane in frustum.planes.iter() {
+            if plane.normal.x > 0. {
+                unsafe {
+                    vmin.x = self.min_or_index.min_and_index.min.x;
+                    vmax.x = self.max_or_len.max_and_len.max.x;
+                }
+            } else {
+                unsafe {
+                    vmin.x = self.max_or_len.max_and_len.max.x;
+                    vmax.x = self.min_or_index.min_and_index.min.x;
+                }
+            }
+            if plane.normal.y > 0. {
+                unsafe {
+                    vmin.y = self.min_or_index.min_and_index.min.y;
+                    vmax.y = self.max_or_len.max_and_len.max.y;
+                }
+            } else {
+                unsafe {
+                    vmin.y = self.max_or_len.max_and_len.max.y;
+                    vmax.y = self.min_or_index.min_and_index.min.y;
+                }
+            }
+            if plane.normal.z > 0. {
+                unsafe {
+                    vmin.z = self.min_or_index.min_and_index.min.z;
+                    vmax.z = self.max_or_len.max_and_len.max.z;
+                }
+            } else {
+                unsafe {
+                    vmin.z = self.max_or_len.max_and_len.max.z;
+                    vmax.z = self.min_or_index.min_and_index.min.z;
+                }
+            }
+
+            if plane.normal.dot(&vmin) + plane.d > 0. {
+                return false;
+            }
+            if plane.normal.dot(&vmax) + plane.d >= 0. {
+                ret = true;
+            }
+        }
+        ret
+    }
+
+    #[inline(always)]
     fn intersects_ray(&self, ray: &Ray) -> Option<f32> {
         unsafe {
             let origin = ray.origin.xyz0;
@@ -116,26 +177,26 @@ impl BVHNode {
             let l1 = (boxmin - origin) * invdir;
             let l2 = (boxmax - origin) * invdir;
 
-            let l1a      = _mm_min_ps(l1, f32x4::splat(f32::INFINITY));
-            let l2a      = _mm_min_ps(l2, f32x4::splat(f32::INFINITY));
+            let l1a = _mm_min_ps(l1, f32x4::splat(f32::INFINITY));
+            let l2a = _mm_min_ps(l2, f32x4::splat(f32::INFINITY));
 
-            let l1b      = _mm_max_ps(l1, f32x4::splat(-f32::INFINITY));
-            let l2b      = _mm_max_ps(l2, f32x4::splat(-f32::INFINITY));
+            let l1b = _mm_max_ps(l1, f32x4::splat(-f32::INFINITY));
+            let l2b = _mm_max_ps(l2, f32x4::splat(-f32::INFINITY));
 
             let mut lmax = _mm_max_ps(l1a, l2a);
             let mut lmin = _mm_min_ps(l1b, l2b);
 
-            let lmax0    = _mm_shuffle_ps(lmax, lmax, 0x39);
-            let lmin0    = _mm_shuffle_ps(lmin, lmin, 0x39);
+            let lmax0 = _mm_shuffle_ps(lmax, lmax, 0x39);
+            let lmin0 = _mm_shuffle_ps(lmin, lmin, 0x39);
 
-            lmax         = _mm_min_ss(lmax, lmax0);
-            lmin         = _mm_max_ss(lmin, lmin0);
+            lmax = _mm_min_ss(lmax, lmax0);
+            lmin = _mm_max_ss(lmin, lmin0);
 
-            let lmax1    = _mm_movehl_ps(lmax, lmax);
-            let lmin1    = _mm_movehl_ps(lmin, lmin);
+            let lmax1 = _mm_movehl_ps(lmax, lmax);
+            let lmin1 = _mm_movehl_ps(lmin, lmin);
 
-            lmax         = _mm_min_ss(lmax, lmax1);
-            lmin         = _mm_max_ss(lmin, lmin1);
+            lmax = _mm_min_ss(lmax, lmax1);
+            lmin = _mm_max_ss(lmin, lmin1);
 
             // TODO use these for early out traversal
             let t_far = lmin.extract(0);
@@ -146,13 +207,123 @@ impl BVHNode {
                 None
             }
 
-            
+
         }
     }
 
 
+    fn intersect_ranged<'a, Shape: BHShape>(
+        nodes: &[BVHNode],
+        rays: &[Ray],
+        frustum: &Frustum,
+        indices: &Vec<usize>,
+        shapes: &'a [Shape],
+    ) -> Option<(&'a Shape, Intersection)> {
+
+        fn get_first_hit(rays: &[Ray], frustum: &Frustum, node: &BVHNode, i_a: usize) -> usize {
+            if node.intersects_ray(&rays[i_a]).is_some() {
+                return i_a;
+            }
+            if !node.intersects_frustum(frustum) {
+                return rays.len();
+            }
+            for i in (i_a + 1..rays.len()) {
+                if node.intersects_ray(&rays[i]).is_some() {
+                    return i;
+                }
+            }
+            return rays.len();
+        }
+
+        fn get_last_hit(rays: &[Ray], node: &BVHNode, i_a: usize) -> usize {
+            for i in (0..rays.len()).rev() {
+                if node.intersects_ray(&rays[i]).is_some() {
+                    return i + 1;
+                }
+            }
+            return i_a + 1;
+        }
+
+        let mut cur_cell = nodes[0];
+        let mut stack = Vec::with_capacity(12);
+        let mut i_a = 0;
+        let mut answer: Option<(&Shape, Intersection)> = None;
+
+        loop {
+            i_a = get_first_hit(rays, frustum, &cur_cell, i_a);
+            if i_a < rays.len() {
+                if cur_cell.len() == 0 {
+                    let left = cur_cell.index() as usize;
+                    let a = nodes[left].intersects_ray(&rays[i_a]);
+                    let b = nodes[left + 1].intersects_ray(&rays[i_a]);
+                    match (a, b) {
+                        (Some(t1), Some(t2)) => {
+                            if t1 <= t2 {
+                                let stack_item = StackItem {
+                                    node_index: left + 1,
+                                    first_index: i_a,
+                                };
+                                stack.push(stack_item);
+                                cur_cell = nodes[left];
+                                continue;
+                            } else {
+                                let stack_item = StackItem {
+                                    node_index: left,
+                                    first_index: i_a,
+                                };
+                                stack.push(stack_item);
+                                cur_cell = nodes[left + 1];
+                                continue;
+                            }
+                        }
+                        (Some(_), None) => {
+                            cur_cell = nodes[left];
+                            continue;
+                        }
+                        (None, Some(_)) => {
+                            cur_cell = nodes[left + 1];
+                            continue;
+                        }
+                        (None, None) => {
+                            continue;
+                        }
+                    }
+
+                }
+            } else {
+                let i_e = get_last_hit(&rays, &cur_cell, i_a);
+
+                for i in cur_cell.index()..cur_cell.index() + cur_cell.len() {
+                    let idx = indices[i as usize];
+                    let shape = &shapes[idx];
+
+                    for j in (i_a..i_e) {
+                        let intersection = shape.intersect(&rays[j]);
+                        match answer {
+                            Some(ref mut answer) => {
+                                if intersection.distance < answer.1.distance {
+                                    *answer = (shape, intersection)
+                                }
+                            }
+                            None => answer = Some((shape, intersection)),
+                        }
+                    }
+                }
+
+            }
+
+        }
+
+        answer
+    }
+
     #[inline]
-    fn intersect<'a, Shape: BHShape>(nodes: &[BVHNode], ray: &Ray, indices: &Vec<usize>, shapes: &'a[Shape]) -> Option<(&'a Shape, Intersection)> {
+    fn intersect<'a, Shape: BHShape>(
+        nodes: &[BVHNode],
+        ray: &Ray,
+        indices: &Vec<usize>,
+        shapes: &'a [Shape],
+    ) -> Option<(&'a Shape, Intersection)> {
         let mut stack = Vec::with_capacity(12);
         stack.push(0);
         let mut answer: Option<(&Shape, Intersection)> = None;
@@ -162,37 +333,45 @@ impl BVHNode {
                 let left = node.index() as usize;
                 let a = nodes[left].intersects_ray(ray);
                 let b = nodes[left + 1].intersects_ray(ray);
-                match(a,b) {
-                    (Some(t1), Some(t2)) => if t1 <= t2 {
-                        stack.push(left + 1);
-                        stack.push(left);
-                    } else { 
-                        stack.push(left);
-                        stack.push(left + 1);
-                    },
-                    (Some(_), None) =>  stack.push(left),
+                match (a, b) {
+                    (Some(t1), Some(t2)) => {
+                        if t1 <= t2 {
+                            stack.push(left + 1);
+                            stack.push(left);
+                        } else {
+                            stack.push(left);
+                            stack.push(left + 1);
+                        }
+                    }
+                    (Some(_), None) => stack.push(left),
                     (None, Some(_)) => stack.push(left + 1),
-                    (None, None) => {},
+                    (None, None) => {}
                 }
             } else {
-                for i in node.index()..node.index()+node.len() {
+                for i in node.index()..node.index() + node.len() {
                     let idx = indices[i as usize];
                     let shape = &shapes[idx];
                     let intersection = shape.intersect(ray);
                     match answer {
                         Some(ref mut answer) => {
-                                if intersection.distance < answer.1.distance {
+                            if intersection.distance < answer.1.distance {
                                 *answer = (shape, intersection)
                             }
-                        },
-                        None => { answer = Some((shape, intersection)) },
+                        }
+                        None => answer = Some((shape, intersection)),
                     }
                 }
             }
         }
         answer
     }
-    fn intersect_recursive<'a, Shape: BHShape>(nodes: &[BVHNode], node_index: usize, ray: &Ray, indices: &Vec<usize>, shapes: &'a[Shape]) -> Option<(&'a Shape, Intersection)> {
+    fn intersect_recursive<'a, Shape: BHShape>(
+        nodes: &[BVHNode],
+        node_index: usize,
+        ray: &Ray,
+        indices: &Vec<usize>,
+        shapes: &'a [Shape],
+    ) -> Option<(&'a Shape, Intersection)> {
         let node = nodes[node_index];
         if node.len() == 0 {
             let left = node.index() as usize;
@@ -201,43 +380,51 @@ impl BVHNode {
             match (l, r) {
                 (Some(t1), Some(t2)) => {
                     if t1 <= t2 {
-                        match (BVHNode::intersect_recursive(nodes, left, ray, indices, shapes), BVHNode::intersect_recursive(nodes, left + 1, ray, indices, shapes)) {
-                            (Some(x),Some(y)) => Some(if x.1.distance < y.1.distance { x } else { y }),
+                        match (
+                            BVHNode::intersect_recursive(nodes, left, ray, indices, shapes),
+                            BVHNode::intersect_recursive(nodes, left + 1, ray, indices, shapes),
+                        ) {
+                            (Some(x), Some(y)) => Some(
+                                if x.1.distance < y.1.distance { x } else { y },
+                            ),
                             (Some(x), _) => Some(x),
                             (_, Some(y)) => Some(y),
                             _ => None,
 
                         }
                     } else {
-                        match (BVHNode::intersect_recursive(nodes, left + 1, ray, indices, shapes), BVHNode::intersect_recursive(nodes, left, ray, indices, shapes)) {
-                            (Some(x),Some(y)) => Some(if x.1.distance < y.1.distance { x } else { y }),
+                        match (
+                            BVHNode::intersect_recursive(nodes, left + 1, ray, indices, shapes),
+                            BVHNode::intersect_recursive(nodes, left, ray, indices, shapes),
+                        ) {
+                            (Some(x), Some(y)) => Some(
+                                if x.1.distance < y.1.distance { x } else { y },
+                            ),
                             (Some(x), _) => Some(x),
                             (_, Some(y)) => Some(y),
                             _ => None,
                         }
                     }
                 }
-                (Some(_), None) => {
-                    BVHNode::intersect_recursive(nodes, left, ray, indices, shapes)
-                }
+                (Some(_), None) => BVHNode::intersect_recursive(nodes, left, ray, indices, shapes),
                 (None, Some(_)) => {
                     BVHNode::intersect_recursive(nodes, left + 1, ray, indices, shapes)
                 }
-                (None, None) => None
+                (None, None) => None,
             }
         } else {
             let mut answer: Option<(&Shape, Intersection)> = None;
-            for i in node.index()..node.index()+node.len() {
+            for i in node.index()..node.index() + node.len() {
                 let idx = indices[i as usize];
                 let shape = &shapes[idx];
                 let intersection = shape.intersect(ray);
                 match answer {
                     Some(ref mut answer) => {
-                            if intersection.distance < answer.1.distance {
+                        if intersection.distance < answer.1.distance {
                             *answer = (shape, intersection)
                         }
-                    },
-                    None => { answer = Some((shape, intersection)) },
+                    }
+                    None => answer = Some((shape, intersection)),
                 }
             }
             answer
@@ -276,7 +463,11 @@ impl BVHNode {
             }
         } else {
             // TODO we should not allocate here! It's slow
-            rindices.extend((node.index()..node.index()+node.len()).map(|i| indices[i as usize]).collect::<Vec<usize>>())
+            rindices.extend(
+                (node.index()..node.index() + node.len())
+                    .map(|i| indices[i as usize])
+                    .collect::<Vec<usize>>(),
+            )
         }
     }
 
@@ -291,7 +482,7 @@ impl BVHNode {
         let node = nodes[node_index];
 
         let mut convex_hull = Default::default();
-        for i in node.index() .. node.index()+node.len() {
+        for i in node.index()..node.index() + node.len() {
             let index = indices[i as usize];
             convex_hull = grow_convex_hull(convex_hull, &shapes[index].aabb());
         }
@@ -311,21 +502,21 @@ impl BVHNode {
         const NUM_BUCKETS: usize = 8;
         let mut buckets = [Bucket::empty(); NUM_BUCKETS];
 
-        for i in node.index() .. node.index() + node.len() {
+        for i in node.index()..node.index() + node.len() {
             let shape = &shapes[indices[i as usize]];
             let shape_aabb = shape.aabb();
             let shape_center = shape_aabb.center();
 
 
             // Get the relative position of the shape centroid `[0.0..1.0]`.
-            let bucket_num_relative =
-                (shape_center[split_axis] - centroid_bounds.min[split_axis]) / split_axis_size;
+            let bucket_num_relative = (shape_center[split_axis] - centroid_bounds.min[split_axis]) /
+                split_axis_size;
 
             // Convert that to the actual `Bucket` number.
             let bucket_num = (bucket_num_relative * (NUM_BUCKETS as f32 - 0.01)) as usize;
 
 
-            // Extend the selected `Bucket` 
+            // Extend the selected `Bucket`
             buckets[bucket_num].add_aabb(&shape_aabb)
 
 
@@ -341,7 +532,8 @@ impl BVHNode {
             let child_l = l_buckets.iter().fold(Bucket::empty(), Bucket::join_bucket);
             let child_r = r_buckets.iter().fold(Bucket::empty(), Bucket::join_bucket);
 
-            let new_cost = (child_l.size as f32 * child_l.aabb.surface_area())  + (child_r.size as f32 * child_r.aabb.surface_area());
+            let new_cost = (child_l.size as f32 * child_l.aabb.surface_area()) +
+                (child_r.size as f32 * child_r.aabb.surface_area());
 
             if new_cost < min_cost {
                 min_bucket = Some(i);
@@ -353,9 +545,10 @@ impl BVHNode {
 
         match min_bucket {
             Some(min_bucket) => {
-                let split_value = centroid_bounds.min[split_axis] + (1 + min_bucket) as f32 * (split_axis_size / (NUM_BUCKETS as f32 - 0.01));
+                let split_value = centroid_bounds.min[split_axis] +
+                    (1 + min_bucket) as f32 * (split_axis_size / (NUM_BUCKETS as f32 - 0.01));
                 let mut pivot_index = node.index() as usize;
-                for i in node.index().. node.index() + node.len() {
+                for i in node.index()..node.index() + node.len() {
                     let center = shapes[indices[i as usize]].aabb().center()[split_axis];
                     if center <= split_value {
                         indices.swap(pivot_index, i as usize);
@@ -370,10 +563,11 @@ impl BVHNode {
                 );
 
                 let left_index = nodes.push(left_node) as u32;
-                
+
                 let right_node = BVHNode::new(
                     pivot_index as u32,
-                    (node.len() as usize - (pivot_index - node.index() as usize)) as u32,
+                    (node.len() as usize - (pivot_index - node.index() as usize)) as
+                        u32,
                     r_aabb,
                 );
 
@@ -382,10 +576,10 @@ impl BVHNode {
                 nodes[node_index].set_index(left_index);
                 nodes[node_index].set_len(0);
                 true
-                    
 
-            },
-            None => false
+
+            }
+            None => false,
         }
 
     }
@@ -505,11 +699,7 @@ impl BVH {
         }
         let (aabb_bounds, _centroid_bounds) = convex_hull;
 
-        let node_index = nodes.push(BVHNode::new(
-            0,
-            indices.len() as u32,
-            aabb_bounds,
-        ));
+        let node_index = nodes.push(BVHNode::new(0, indices.len() as u32, aabb_bounds));
         BVHNode::subdivide(shapes, &mut indices, &mut nodes, node_index);
 
         BVH { nodes, indices }
@@ -525,7 +715,20 @@ impl BVH {
             .collect::<Vec<_>>()
     }
 
-    fn intersect<'a, Shape: BHShape>(&'a self, ray: &Ray, shapes: &'a[Shape]) -> Option<(&Shape, Intersection)> {
+    pub fn intersect_ranged<'a, Shape: BHShape>(
+        &'a self,
+        rays: &[Ray],
+        frustum: &Frustum,
+        shapes: &'a [Shape],
+    ) -> Option<(&Shape, Intersection)> {
+
+        BVHNode::intersect_ranged(&self.nodes, rays, frustum, &self.indices, shapes)
+    }
+    fn intersect<'a, Shape: BHShape>(
+        &'a self,
+        ray: &Ray,
+        shapes: &'a [Shape],
+    ) -> Option<(&Shape, Intersection)> {
         BVHNode::intersect(&self.nodes, ray, &self.indices, shapes)
     }
 }
@@ -539,13 +742,16 @@ impl BoundingHierarchy for BVH {
         self.traverse(ray, shapes)
     }
 
-    fn intersect<'a, Shape: BHShape>(&'a self, ray: &Ray, shapes: &'a[Shape]) -> Option<(&Shape, Intersection)> {
+    fn intersect<'a, Shape: BHShape>(
+        &'a self,
+        ray: &Ray,
+        shapes: &'a [Shape],
+    ) -> Option<(&Shape, Intersection)> {
         self.intersect(ray, shapes)
     }
-      
 
-    fn pretty_print(&self) {
-    }
+
+    fn pretty_print(&self) {}
 }
 
 
@@ -558,10 +764,9 @@ mod tests {
     use packed_bvh::BVHNodePool;
     use nalgebra::Point3;
 
-    use testbase::{build_1200_triangles_bh,
-                   build_12k_triangles_bh, build_120k_triangles_bh, intersect_1200_triangles_bh,
-                   intersect_12k_triangles_bh, intersect_120k_triangles_bh, load_sponza_scene,
-                   intersect_bh};
+    use testbase::{build_1200_triangles_bh, build_12k_triangles_bh, build_120k_triangles_bh,
+                   intersect_1200_triangles_bh, intersect_12k_triangles_bh,
+                   intersect_120k_triangles_bh, load_sponza_scene, intersect_bh};
 
     #[test]
     fn bvhnode_allocation_works_as_expected() {

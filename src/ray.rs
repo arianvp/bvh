@@ -22,10 +22,6 @@ trait RayLike {
 
 pub struct Frustum { }
 
-pub struct RayPacket<'a> {
-    frustum: Frustum,
-    rays: &'a [Ray],
-}
 
 impl RayLike for Ray { }
 

@@ -104,6 +104,7 @@ pub mod flat_bvh;
 pub mod ray;
 mod utils;
 pub mod packed_bvh;
+pub mod frustum;
 
 extern crate stdsimd;
 
